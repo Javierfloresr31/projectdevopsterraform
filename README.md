@@ -49,13 +49,24 @@ Vista del flujo:
                  |
                  v
        Azure Container Apps
-       actualiza/usa esa imagen
+       ejecuta la aplicación Java
                  |
-       +---------+----------+
-       |                    |
-       v                    v
-   Azure Key Vault       Azure SQL
-     (secretos)           (datos)
+       +---------+------------------+
+       |                            |
+       v                            v
+ Configuración de runtime       Persistencia
+       |                            |
+       v                     +------+------+
+ Azure Key Vault             |             |
+ (secretos)                  v             v
+       |                 Azure SQL     Azure Storage
+       v                 (datos)       / Azure Files
+ Variables de entorno                    (imágenes/
+ y conexión JDBC                         archivos)
+       |
+       v
+ Identidad administrada
+ para acceso a Key Vault
 ```
 
 **Relación entre ambos repositorios:**
@@ -64,7 +75,9 @@ Vista del flujo:
 - [`projectdevopsterraform`](https://github.com/Javierfloresr31/projectdevopsterraform) contiene la infraestructura como código y el Jenkinsfile que construye y publica la imagen del proyecto Java.
 - Docker Hub actúa como registro de imágenes entre la etapa de CI y el despliegue en Azure.
 
-**Importante:** Jenkins y Terraform se ejecutan en momentos distintos. Jenkins no lanza `terraform apply` ni realiza el despliegue en Azure. La publicación de una imagen en Docker Hub tampoco actualiza por sí sola el Container App: es necesario ejecutar `terraform apply` después de que Jenkins haya finalizado correctamente. La consulta de Docker Hub selecciona la etiqueta con la actualización más reciente, por lo que el `terraform apply` debe ejecutarse después de la publicación deseada. Terraform actualizará el Container App cuando la referencia de imagen resultante sea distinta de la que tiene registrada en el estado/configuración aplicada; si la etiqueta seleccionada no cambia, no debe asumirse que se generará una nueva revisión.
+**Importante:** Jenkins y Terraform se ejecutan actualmente en momentos distintos. Jenkins no lanza `terraform apply` ni realiza el despliegue en Azure. La publicación de una imagen en Docker Hub tampoco actualiza por sí sola el Container App: después de Jenkins debe ejecutarse `terraform apply`. La consulta actual de Docker Hub selecciona la etiqueta con la actualización más reciente, por lo que el apply debe realizarse después de la publicación deseada. Para reproducibilidad, a futuro conviene pasar a Terraform la etiqueta exacta del SHA generado por Jenkins, en lugar de depender de la etiqueta más reciente del repositorio.
+
+El flujo de ejecución de la aplicación Java es independiente del pipeline CI: Container Apps inicia el contenedor; Spring Boot debe recibir su perfil, configuración de conexión a Azure SQL y parámetros de almacenamiento mediante configuración externa. Key Vault y la identidad administrada están parcialmente preparados en Terraform, pero todavía no se han declarado las referencias de secretos ni las variables de entorno necesarias en el Container App. Del mismo modo, la cuenta Azure Storage y el recurso Azure Files están creados en código, pero aún no están conectados al contenedor. Estas integraciones se describen en las secciones siguientes como pendientes, no como funcionalidades ya operativas.
 
 ## 2. Tecnologías y componentes
 
@@ -144,7 +157,11 @@ Los archivos `storage_account.tf` y `azure_files.tf` agregan almacenamiento pers
 - `azurerm_storage_share.share_01`: crea un recurso compartido Azure Files asociado a esa cuenta, con cuota de 1 GiB.
 - Los nombres se parametrizan mediante `st_01_name` y `share_01_name` en `variables.tf` y `terraform.tfvars`.
 
-**Alcance actual:** el código aprovisiona la cuenta y el recurso compartido, pero no configura su montaje en Azure Container Apps. En `container_app_env.tf` no hay bloques de almacenamiento/volumen/montaje asociados al share. Por tanto, no debe considerarse todavía almacenamiento persistente disponible dentro del contenedor. Para utilizarlo desde Container Apps hay que configurar la integración de Azure Files a nivel del Container Apps Environment y declarar el volumen y su montaje en la revisión del Container App, además de validar la autenticación y los permisos de acceso.
+**Alcance actual:** el código aprovisiona la cuenta y el recurso compartido, pero no configura su montaje en Azure Container Apps. En `container_app_env.tf` no hay bloques de almacenamiento/volumen/montaje asociados al share. Por tanto, no debe considerarse todavía almacenamiento persistente disponible dentro del contenedor ni que la aplicación pueda guardar o recuperar imágenes desde Azure Files.
+
+Para completar el flujo con Azure Files se requiere: registrar el share en el Container Apps Environment, declarar un volumen en la plantilla del Container App, montar ese volumen en una ruta del contenedor (por ejemplo, `/app/uploads`) y configurar la aplicación Java para leer y escribir en esa ruta. También debe definirse cómo se gestionan las credenciales de montaje. La aplicación no debe asumir que una ruta local del contenedor es persistente si no está respaldada por el volumen.
+
+Si el caso de uso consiste principalmente en almacenar imágenes y acceder a ellas por identificador, Azure Blob Storage también es una alternativa a evaluar: la aplicación se integra mediante SDK/API y una identidad con el rol de datos adecuado. El repositorio actual no declara un contenedor Blob ni una integración SDK; no se debe interpretar la Storage Account existente como una solución Blob ya configurada.
 
 ### 3.4 Azure SQL
 
@@ -162,6 +179,58 @@ El archivo `sql/create_app_user.sql`:
 El script contiene un marcador de posición para la contraseña de `appreader`. Debe sustituirse por una contraseña segura al ejecutarlo y nunca publicarse una contraseña real en el repositorio.
 
 La documentación `Azure-SQL.md` explica el aprovisionamiento, la preparación del usuario de aplicación y los aspectos de conectividad.
+
+## 3.5 Flujo de configuración y conexión de la aplicación Java
+
+Cuando Azure Container Apps inicia la imagen publicada, Spring Boot debe cargar la configuración del entorno y establecer las conexiones externas. El flujo objetivo es:
+
+```text
+Azure Container Apps
+        |
+        | inicia imagen Docker
+        v
+Aplicación Java / Spring Boot
+        |
+        +-----------------------------+
+        |                             |
+        v                             v
+Configuración externa             Persistencia
+        |                             |
+        v                       +-----+------+
+Azure Key Vault                 |            |
+        |                       v            v
+        v                  Azure SQL    Azure Storage
+Managed Identity           JDBC         / Azure Files
+        |                       |            |
+        +-- obtiene secretos     |            |
+            autorizados          v            v
+                            Datos de la    Imágenes/
+                            aplicación     archivos
+```
+
+La configuración típica de Spring Boot para una conexión JDBC a Azure SQL incluye:
+
+- `SPRING_PROFILES_ACTIVE`: perfil de ejecución, por ejemplo `prod`.
+- `SPRING_DATASOURCE_URL`: URL JDBC del servidor y base de datos Azure SQL, incluyendo los parámetros TLS requeridos.
+- `SPRING_DATASOURCE_USERNAME`: usuario de aplicación de la base de datos, no el administrador del servidor.
+- `SPRING_DATASOURCE_PASSWORD`: contraseña del usuario de aplicación.
+
+Para almacenamiento basado en Azure Files, la aplicación puede utilizar una variable como `APP_STORAGE_PATH=/app/uploads`, siempre que el volumen esté montado en esa ruta. Si posteriormente se decide utilizar Blob Storage, la configuración cambia: la aplicación necesitará el endpoint/cuenta y el contenedor, además del SDK de Azure y permisos de datos para la identidad administrada.
+
+**Estado real de esta integración en el repositorio:**
+
+| Elemento | Estado |
+|---|---|
+| Azure SQL Server y base de datos | Declarados en Terraform. |
+| Usuario SQL de aplicación | El script `sql/create_app_user.sql` contempla el usuario `appreader` con permiso de lectura; debe ejecutarse y configurarse su credencial de forma segura. |
+| Key Vault y User Assigned Managed Identity | Declarados; la identidad tiene asignado `Key Vault Secrets User` sobre las bóvedas. |
+| Secretos de conexión SQL y referencias en Container Apps | No están declarados ni configurados en el Container App. |
+| Variables de entorno de Spring Boot | No están declaradas en la plantilla actual del Container App. |
+| Azure Storage Account y Azure Files Share | Declarados en Terraform. |
+| Montaje de Azure Files en Container Apps | Pendiente; no hay volumen ni montaje en la configuración actual. |
+| Integración Java para almacenamiento de imágenes | Pendiente de implementar en la aplicación, según el mecanismo de almacenamiento que se elija. |
+
+**Nota sobre el ciclo de vida Terraform:** el recurso Container App contiene `lifecycle.ignore_changes` para `secret`, `template[0].container[0].env`, `template[0].volume` y `volume_mounts`. En su estado actual, Terraform ignora cambios en esos atributos. Antes de administrar la configuración y el montaje de forma declarativa, debe revisarse esa lista para evitar que Terraform omita precisamente los cambios que se necesitan aplicar.
 
 ## 4. Máquina virtual, Jenkins y Docker
 
@@ -205,6 +274,8 @@ La etiqueta basada en el SHA permite relacionar la imagen publicada con el commi
 El pipeline presupone que el agente Jenkins dispone de Git, Docker y acceso al repositorio y a Docker Hub. Para publicar en un repositorio privado o cuando Docker Hub lo requiera, configura las credenciales en Jenkins Credentials y realiza un `docker login` seguro; no escribas tokens ni contraseñas directamente en el Jenkinsfile.
 
 **Alcance actual:** el pipeline termina al publicar la imagen. No incluye una etapa de despliegue, actualización de Container Apps, aprobación manual ni ejecución de `terraform apply`. El despliegue de la imagen sigue siendo un paso independiente ejecutado desde Terraform después de la publicación.
+
+El bloque `post { success }` del Jenkinsfile imprime actualmente el mensaje «imagen publicada y desplegada». Ese texto no refleja el comportamiento real del pipeline: la etapa ejecuta únicamente `docker push`. El despliegue en Azure no ocurre hasta que se ejecuta Terraform por separado. Esta discrepancia se documenta aquí sin modificar el Jenkinsfile.
 
 ## 6. Estructura del repositorio
 
