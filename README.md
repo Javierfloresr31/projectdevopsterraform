@@ -99,7 +99,7 @@ Los nombres concretos se parametrizan en `terraform.tfvars`; los nombres globalm
 | Network Interface | NIC con dirección privada dinámica y asociación a la IP pública definida. |
 | Public IP | IP pública estática. |\n| Linux Virtual Machine | VM Ubuntu Server 22.04 LTS (`Standard_D2s_v3`) que aloja Docker y el contenedor Jenkins utilizado para ejecutar el pipeline. |
 | Network Security Group | Reglas de entrada para SSH (22), HTTP (80), HTTPS (443), 8080 y 8081. |
-| Output | Expone el valor de la dirección IP pública mediante `terraform output`. |
+| Storage Account | Cuenta de almacenamiento Standard con replicación local (LRS), definida en `storage_account.tf`. |\n| Azure Files Share | Recurso compartido de archivos de Azure con cuota configurada de 1 GiB, definido en `azure_files.tf`. |\n| Output | Expone el valor de la dirección IP pública mediante `terraform output`. |
 
 ### 3.1 Container Apps
 
@@ -133,7 +133,7 @@ La identidad administrada recibe `Key Vault Secrets User`. El usuario autenticad
 
 El código declara los permisos, pero no crea automáticamente los secretos de aplicación. Estos deben cargarse en Key Vault y configurarse como referencias en Container Apps. El recurso actual ignora cambios en `secret` y variables de entorno del contenedor, por lo que esos elementos pueden requerir configuración adicional fuera del bloque administrado por Terraform.
 
-### 3.3 Azure SQL
+### 3.3 Azure Storage y Azure Files\n\nLos archivos `storage_account.tf` y `azure_files.tf` agregan almacenamiento persistente a la infraestructura:\n\n- `azurerm_storage_account.st_01`: crea una Storage Account con nivel Standard y replicación local (`LRS`), en la región del Resource Group.\n- `azurerm_storage_share.share_01`: crea un recurso compartido Azure Files asociado a esa cuenta, con cuota de 1 GiB.\n- Los nombres se parametrizan mediante `st_01_name` y `share_01_name` en `variables.tf` y `terraform.tfvars`.\n\n**Alcance actual:** el código aprovisiona la cuenta y el recurso compartido, pero no configura su montaje en Azure Container Apps. En `container_app_env.tf` no hay bloques de almacenamiento/volumen/montaje asociados al share. Por tanto, no debe considerarse todavía almacenamiento persistente disponible dentro del contenedor. Para utilizarlo desde Container Apps hay que configurar la integración de Azure Files a nivel del Container Apps Environment y declarar el volumen y su montaje en la revisión del Container App, además de validar la autenticación y los permisos de acceso.\n\n### 3.4 Azure SQL
 
 `sql_server.tf` configura un servidor Azure SQL y una base de datos Basic de 2 GB. La región SQL se parametriza independientemente de la región del grupo de recursos y, en la configuración de ejemplo, se establece como `centralus`.
 
@@ -191,7 +191,7 @@ La etiqueta basada en el SHA permite relacionar la imagen publicada con el commi
 
 El pipeline presupone que el agente Jenkins dispone de Git, Docker y acceso al repositorio y a Docker Hub. Para publicar en un repositorio privado o cuando Docker Hub lo requiera, configura las credenciales en Jenkins Credentials y realiza un `docker login` seguro; no escribas tokens ni contraseñas directamente en el Jenkinsfile.
 
-**Alcance actual:** el pipeline termina al publicar la imagen. No incluye una etapa de despliegue, actualización de Container Apps, aprobación manual ni ejecución de `terraform apply`.
+**Alcance actual:** el pipeline termina al publicar la imagen. No incluye una etapa de despliegue, actualización de Container Apps, aprobación manual ni ejecución de `terraform apply`. El despliegue de la imagen sigue siendo un paso independiente ejecutado desde Terraform después de la publicación.
 
 ## 6. Estructura del repositorio
 
@@ -205,7 +205,7 @@ El pipeline presupone que el agente Jenkins dispone de Git, Docker y acceso al r
 | `dockerhub.tf` | Obtiene la etiqueta más reciente de Docker Hub y construye la referencia de imagen. |
 | `identity_user_assigned.tf` | Identidad administrada y asignaciones RBAC. |
 | `keyvault.tf` | Cuatro instancias de Azure Key Vault. |
-| `sql_server.tf` | Servidor SQL, base de datos y regla de firewall. |
+| `sql_server.tf` | Servidor SQL, base de datos y regla de firewall. |\n| `storage_account.tf` | Cuenta de almacenamiento Azure Storage Standard/LRS. |\n| `azure_files.tf` | Recurso compartido Azure Files con cuota de 1 GiB. |
 | `networking.tf` | VNet, subnet y NIC. |
 | `ip_public.tf` | Dirección IP pública estática. |\n| `virtual_machine.tf` | Máquina virtual Ubuntu que aloja Docker y Jenkins. |
 | `net_sec_group.tf` | Network Security Group y asociación a la NIC. |
@@ -305,7 +305,7 @@ Antes de utilizar esta configuración fuera de un entorno de laboratorio o desar
 - **Network Security Group:** SSH y los puertos de aplicación aparecen abiertos desde cualquier dirección (`*`). Restringe los orígenes a rangos confiables y elimina puertos que no sean necesarios.
 - **Jenkins y Docker:** protege las credenciales y el acceso al socket Docker. Usa credenciales administradas por Jenkins y evita secretos en los logs.
 - **Despliegue de imagen:** la consulta de Docker Hub selecciona la etiqueta más recientemente actualizada. Para despliegues reproducibles, considera fijar una etiqueta inmutable o digest de imagen.
-- **SQL:** el usuario `appreader` tiene permisos de lectura. No uses una cuenta de administrador para la conexión de la aplicación.
+- **Azure Files:** el share se crea, pero todavía no está conectado al Container App. No asumir que el filesystem del contenedor es persistente.\n- **SQL:** el usuario `appreader` tiene permisos de lectura. No uses una cuenta de administrador para la conexión de la aplicación.
 
 ## 11. Limpieza de recursos
 
