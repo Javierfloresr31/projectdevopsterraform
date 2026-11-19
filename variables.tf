@@ -121,3 +121,16 @@ variable "kv_pep_aca_01_name_nic" {
   description = "el nombre de la nic de la privante endpoint 01"
   type        = string
 }
+
+// Storage Account 01
+variable "st_01_name" {
+  description = "Nombre del storage account"
+  type        = string
+}
+
+//Azure Files 01
+
+variable "share_01_name" {
+  description = "Nombre del Azure Files"
+  type        = string
+}

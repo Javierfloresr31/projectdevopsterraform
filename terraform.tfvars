@@ -14,6 +14,9 @@ cae_01_workload_profile = "Consumption"
 
 // Container Apps(ca)
 aca_01_name = "ca-project-dev-westus2-001"
+st_01_name = "stprojectdevwestus201"
+
+share_01_name = "share-project-dev-westus2-001"
 
 //identity 
 

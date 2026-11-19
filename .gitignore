@@ -40,3 +40,7 @@ terraform.rc
 # SSH keys, en cualquier carpeta
 **/id_rsa_dmc_02
 **/id_rsa_dmc_02.pub
+
+*.tfstate
+*.tfstate.*
+.terraform/
