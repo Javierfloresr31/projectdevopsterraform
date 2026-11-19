@@ -97,7 +97,7 @@ Los nombres concretos se parametrizan en `terraform.tfvars`; los nombres globalm
 | Virtual Network | Red virtual `10.0.0.0/16`. |
 | Subnet | Subred `10.0.2.0/24`. |
 | Network Interface | NIC con dirección privada dinámica y asociación a la IP pública definida. |
-| Public IP | IP pública estática. |
+| Public IP | IP pública estática. |\n| Linux Virtual Machine | VM Ubuntu Server 22.04 LTS (`Standard_D2s_v3`) que aloja Docker y el contenedor Jenkins utilizado para ejecutar el pipeline. |
 | Network Security Group | Reglas de entrada para SSH (22), HTTP (80), HTTPS (443), 8080 y 8081. |
 | Output | Expone el valor de la dirección IP pública mediante `terraform output`. |
 
@@ -150,26 +150,29 @@ El script contiene un marcador de posición para la contraseña de `appreader`. 
 
 La documentación `Azure-SQL.md` explica el aprovisionamiento, la preparación del usuario de aplicación y los aspectos de conectividad.
 
-## 4. Jenkins y Docker
+## 4. Máquina virtual, Jenkins y Docker
 
-El repositorio ofrece dos alternativas documentadas para levantar Jenkins en Ubuntu:
+La infraestructura incluye una **máquina virtual Linux en Azure** definida en `virtual_machine.tf`. La VM utiliza Ubuntu Server 22.04 LTS, tamaño `Standard_D2s_v3`, usuario administrador `adminuser` y autenticación SSH mediante clave pública. Está conectada a la NIC y a la IP pública declaradas en los archivos de red.
 
-- `install.sh`: instala Docker Engine y sus complementos desde el repositorio oficial de Docker, configura el servicio y levanta Jenkins.
-- `Dockerfile.jenkins` junto con `Jenkins-Docker.md`: construye una imagen basada en Jenkins LTS que incorpora el cliente Docker y ejecuta Jenkins en un contenedor.
+Esta máquina virtual es el servidor donde se ejecuta Docker y, dentro de un contenedor Docker, Jenkins. **El pipeline se ejecuta desde ese Jenkins alojado en la VM**, no directamente desde Terraform ni desde GitHub Actions.
 
-Ambas alternativas usan el volumen Docker `jenkins_home` para conservar trabajos, plugins, usuarios y credenciales aunque se elimine el contenedor.
+El repositorio ofrece los siguientes recursos para preparar ese servidor:
 
-La interfaz web se publica en el puerto 8080. La contraseña inicial se consulta dentro del contenedor:
+- `install.sh`: instala Docker Engine y sus complementos en Ubuntu, habilita el servicio y construye/levanta el contenedor Jenkins.
+- `Dockerfile.jenkins`: construye una imagen basada en Jenkins LTS que incorpora el cliente Docker.
+- `Jenkins-Docker.md`: documenta la ejecución de Jenkins en Docker, persistencia, operación y respaldo.
+
+El volumen Docker `jenkins_home` conserva trabajos, plugins, usuarios y credenciales aunque se elimine el contenedor. La interfaz web de Jenkins se publica en el puerto 8080. La contraseña inicial se consulta dentro del contenedor:
 
 ```bash
 docker exec jenkins cat /var/jenkins_home/secrets/initialAdminPassword
 ```
 
-Para utilizar Docker desde los pipelines, el contenedor Jenkins monta `/var/run/docker.sock` y se añade al grupo propietario del socket.
+Para que los pipelines puedan ejecutar comandos Docker, el contenedor Jenkins monta `/var/run/docker.sock` y se añade al grupo propietario del socket. Así, Jenkins utiliza el daemon Docker disponible en la máquina virtual para construir la imagen de la aplicación antes de publicarla en Docker Hub.
 
-> **Advertencia de seguridad:** montar el socket Docker concede a Jenkins capacidad de controlar el daemon del host y puede equivaler a privilegios de administrador/root. Limita el acceso al Jenkins y a los pipelines de confianza. No publiques el volumen `jenkins_home`, ya que contiene información sensible.
+El atributo `custom_data` de la VM está comentado en `virtual_machine.tf`; por tanto, el archivo `install.sh` no se ejecuta automáticamente como parte de la creación de la VM. Debe ejecutarse como paso de instalación/configuración en Ubuntu, siguiendo las instrucciones del repositorio.
 
-Las instrucciones detalladas de instalación, persistencia, operación, respaldo y restauración se encuentran en `Jenkins-Docker.md`.
+> **Advertencia de seguridad:** montar el socket Docker concede a Jenkins capacidad de controlar el daemon Docker del host y puede equivaler a privilegios de administrador/root. Limita el acceso a la VM, a Jenkins y a los pipelines de confianza. Además, las reglas SSH y de los puertos de servicio deben restringirse a orígenes confiables. No publiques el volumen `jenkins_home`, ya que contiene información sensible.
 
 ## 5. Pipeline CI: construcción y publicación
 
@@ -204,7 +207,7 @@ El pipeline presupone que el agente Jenkins dispone de Git, Docker y acceso al r
 | `keyvault.tf` | Cuatro instancias de Azure Key Vault. |
 | `sql_server.tf` | Servidor SQL, base de datos y regla de firewall. |
 | `networking.tf` | VNet, subnet y NIC. |
-| `ip_public.tf` | Dirección IP pública estática. |
+| `ip_public.tf` | Dirección IP pública estática. |\n| `virtual_machine.tf` | Máquina virtual Ubuntu que aloja Docker y Jenkins. |
 | `net_sec_group.tf` | Network Security Group y asociación a la NIC. |
 | `output.tf` | Salida de la IP pública. |
 | `sql/create_app_user.sql` | Tabla de ejemplo, registros iniciales y usuario de lectura. |
