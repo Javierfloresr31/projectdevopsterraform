@@ -2,21 +2,21 @@ pipeline {
     agent any
 
     environment {
-        REPO_URL = 'https://github.com/hansleolml/clasedmc02.git'
-        IMAGE_NAME = 'hansleolml/jenkinsdocker'
+        REPO_URL = 'https://github.com/Javierfloresr31/projectdevopsjava.git'
+        IMAGE_NAME = 'javierfloresr31/myapp'
     }
 
     stages {
         stage('Checkout') {
             steps {
                 echo '=== Etapa: Checkout ==='
-                echo 'Clonando https://github.com/hansleolml/clasedmc02'
+                echo 'Clonando https://github.com/Javierfloresr31/projectdevopsjava'
                 sh '''
-                    rm -rf clasedmc02
-                    git clone --depth 1 --branch master "${REPO_URL}" clasedmc02
+                    rm -rf projectdevopsjava
+                    git clone --depth 1 --branch main "${REPO_URL}" projectdevopsjava
                 '''
                 script {
-                    env.COMMIT = sh(script: 'git -C clasedmc02 rev-parse HEAD', returnStdout: true).trim()
+                    env.COMMIT = sh(script: 'git -C projectdevopsjava rev-parse HEAD', returnStdout: true).trim()
                 }
                 echo "Repositorio clonado. Commit: ${env.COMMIT}"
             }
@@ -25,7 +25,7 @@ pipeline {
         stage('Build Image') {
             steps {
                 echo '=== Etapa: Build de imagen Docker ==='
-                dir('clasedmc02/DMC_CLASE_03/Java_hello') {
+                dir('projectdevopsjava') {
                     sh 'docker build -t "${IMAGE_NAME}:${COMMIT}" .'
                 }
                 echo "Imagen ${env.IMAGE_NAME}:${env.COMMIT} creada"
@@ -40,29 +40,8 @@ pipeline {
             }
         }
 
-        stage('Deploy') {
-            steps {
-                echo '=== Etapa: Deploy ==='
-                echo 'Conectando por SSH a adminuser@20.97.4.16'
-                withCredentials([sshUserPrivateKey(
-                    credentialsId: 'llaveprivada',
-                    keyFileVariable: 'SSH_KEY'
-                )]) {
-                    sh '''
-                        ssh -i "$SSH_KEY" \
-                            -o StrictHostKeyChecking=no \
-                            -o UserKnownHostsFile=/dev/null \
-                            adminuser@20.97.4.16 bash -s <<EOF
-set -e
-docker pull ${IMAGE_NAME}:${COMMIT}
-docker rm -f jenkinsdocker || true
-docker run -d --name jenkinsdocker --restart unless-stopped -p 443:8080 ${IMAGE_NAME}:${COMMIT}
-EOF
-                    '''
-                }
-                echo "Contenedor jenkinsdocker publicado en http://20.97.4.16:8080"
-            }
-        }
+        
+
     }
 
     post {
@@ -74,7 +53,7 @@ EOF
             echo 'Revisar logs para mas detalles'
         }
         always {
-            sh 'rm -rf clasedmc02 || true'
+            sh 'rm -rf projectdevopsjava || true'
             echo '=== Pipeline finalizado ==='
         }
     }

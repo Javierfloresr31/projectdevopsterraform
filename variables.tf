@@ -34,6 +34,56 @@ variable "aca_01_name" {
   type        = string
 }
 
+variable "aca_01_image" {
+  description = "El repositorio Docker Hub del Container App, sin etiqueta"
+  type        = string
+  default     = "docker.io/javierfloresr31/myapp"
+}
+
+variable "sql_server_name" {
+  description = "Nombre DNS global del servidor Azure SQL"
+  type        = string
+  default     = "sql-terraformcloud-dev-centralus-001"
+}
+
+variable "sql_database_name" {
+  description = "Nombre de la base de datos Azure SQL"
+  type        = string
+  default     = "sqldb-terraformcloud-dev-centralus-001"
+}
+
+variable "sql_location" {
+  description = "Región del servidor Azure SQL, independiente de la región del resource group"
+  type        = string
+  default     = "centralus"
+}
+
+variable "sql_admin_username" {
+  description = "Usuario administrador del servidor Azure SQL"
+  type        = string
+  default     = "sqlterraformadmin"
+}
+
+variable "sql_admin_password" {
+  description = "Contraseña del administrador SQL; no guardar en terraform.tfvars"
+  type        = string
+  sensitive   = true
+
+  validation {
+    condition = (
+      length(var.sql_admin_password) >= 8 &&
+      length(var.sql_admin_password) <= 128 &&
+      (
+        (length(regexall("[A-Z]", var.sql_admin_password)) > 0 ? 1 : 0) +
+        (length(regexall("[a-z]", var.sql_admin_password)) > 0 ? 1 : 0) +
+        (length(regexall("[0-9]", var.sql_admin_password)) > 0 ? 1 : 0) +
+        (length(regexall("[^A-Za-z0-9]", var.sql_admin_password)) > 0 ? 1 : 0)
+      ) >= 3
+    )
+    error_message = "La contraseña debe tener entre 8 y 128 caracteres e incluir al menos tres de estos grupos: mayúsculas, minúsculas, números y símbolos."
+  }
+}
+
 // identity
 variable "identity_01_name" {
   description = "El nombre del identity 01"

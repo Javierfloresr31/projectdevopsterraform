@@ -1,6 +1,8 @@
 #!/bin/bash
 set -euo pipefail
 
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+
 echo "=== Actualizando paquetes ==="
 sudo apt update
 
@@ -39,17 +41,23 @@ echo "=== Habilitando el servicio de Docker ==="
 sudo systemctl enable --now docker
 
 echo "=== Levantando Jenkins ==="
+DOCKER_GID="$(stat -c '%g' /var/run/docker.sock)"
 sudo docker volume create jenkins_home
+sudo docker build -f "${SCRIPT_DIR}/Dockerfile.jenkins" \
+  -t jenkins-with-docker:lts "${SCRIPT_DIR}"
 sudo docker rm -f jenkins >/dev/null 2>&1 || true
 sudo docker run -d \
   --name jenkins \
   --restart unless-stopped \
   -p 8080:8080 \
+  --group-add "${DOCKER_GID}" \
   -v jenkins_home:/var/jenkins_home \
-  jenkins/jenkins:lts
+  -v /var/run/docker.sock:/var/run/docker.sock \
+  jenkins-with-docker:lts
 
 echo "=== Instalación completa ==="
 sudo docker --version
 sudo docker ps --filter name=jenkins
 echo "Jenkins queda en el puerto 8080."
 echo "El usuario ${DOCKER_USER} puede usar docker sin sudo después de cerrar la sesión y volver a entrar."
+echo "Jenkins puede controlar Docker en el host mediante /var/run/docker.sock."

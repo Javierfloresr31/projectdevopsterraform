@@ -1,4 +1,5 @@
 location = "westus 2"
+sql_location = "centralus"
 tags = {
   Environment = "Desarrollo"
   Department  = "TI"

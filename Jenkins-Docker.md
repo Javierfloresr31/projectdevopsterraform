@@ -1,6 +1,6 @@
 # Jenkins con Docker
 
-Este documento levanta Jenkins en un contenedor, en lugar de instalarlo en Ubuntu con `apt` como hace `install.sh`. Se usa la imagen LTS gratuita `jenkins/jenkins:lts`, que ya trae Java, así que no hace falta instalar `openjdk` ni agregar el repositorio de Jenkins.
+Este documento levanta Jenkins en un contenedor, en lugar de instalarlo en Ubuntu con `apt` como hace `install.sh`. Se construye una imagen basada en `jenkins/jenkins:lts` con el cliente Docker para que los pipelines puedan ejecutar comandos Docker en el host.
 
 Los datos de Jenkins (trabajos, plugins, usuarios y credenciales) viven en un volumen montado en `/var/jenkins_home`. Si se borra el contenedor, esa información se conserva.
 
@@ -8,6 +8,7 @@ Los datos de Jenkins (trabajos, plugins, usuarios y credenciales) viven en un vo
 
 - Docker instalado y el servicio en ejecución.
 - Puerto `8080` libre en el host. Es la interfaz web.
+- El socket `/var/run/docker.sock` disponible en el host.
 
 ## Volumen
 
@@ -29,19 +30,27 @@ Se usa un volumen con nombre, `jenkins_home`. Docker lo crea y lo administra; no
 Desde esta carpeta:
 
 ```bash
+docker build -f Dockerfile.jenkins -t jenkins-with-docker:lts .
 docker volume create jenkins_home
+
+DOCKER_GID=$(stat -c '%g' /var/run/docker.sock)
 
 docker run -d \
   --name jenkins \
   --restart unless-stopped \
   -p 8080:8080 \
+  --group-add "$DOCKER_GID" \
   -v jenkins_home:/var/jenkins_home \
-  jenkins/jenkins:lts
+  -v /var/run/docker.sock:/var/run/docker.sock \
+  jenkins-with-docker:lts
 ```
 
 - `8080:8080` publica la interfaz web.
 - `jenkins_home:/var/jenkins_home` monta el volumen en el directorio de datos de Jenkins.
-- `jenkins/jenkins:lts` es la imagen LTS gratuita y oficial.
+- El socket y el grupo del socket permiten al cliente Docker de Jenkins usar el daemon del host.
+- `Dockerfile.jenkins` parte de la imagen LTS oficial y agrega el cliente Docker.
+
+> **Seguridad:** el acceso a `/var/run/docker.sock` permite controlar el daemon Docker del host y puede dar a los pipelines privilegios equivalentes a root. Habilítalo solo para trabajos y usuarios de confianza.
 
 La interfaz queda en [http://localhost:8080](http://localhost:8080).
 
@@ -72,8 +81,10 @@ docker run -d \
   --name jenkins \
   --restart unless-stopped \
   -p 8080:8080 \
+  --group-add "$(stat -c '%g' /var/run/docker.sock)" \
   -v jenkins_home:/var/jenkins_home \
-  jenkins/jenkins:lts
+  -v /var/run/docker.sock:/var/run/docker.sock \
+  jenkins-with-docker:lts
 ```
 
 Al entrar de nuevo deben seguir los trabajos, plugins y el usuario creados. No vuelvas a usar la contraseña inicial.
@@ -125,8 +136,10 @@ docker run -d \
   --name jenkins \
   --restart unless-stopped \
   -p 8080:8080 \
+  --group-add "$(stat -c '%g' /var/run/docker.sock)" \
   -v "$(pwd)/jenkins_home":/var/jenkins_home \
-  jenkins/jenkins:lts
+  -v /var/run/docker.sock:/var/run/docker.sock \
+  jenkins-with-docker:lts
 ```
 
 No subas `jenkins_home/` al repositorio: contiene secretos y credenciales.

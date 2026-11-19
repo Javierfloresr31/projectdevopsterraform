@@ -32,7 +32,7 @@ resource "azurerm_container_app" "aca_01" {
     min_replicas = 1
     container {
       name   = "projectcontainerapp"
-      image  = "docker.io/javierfloresr31/myapp:1.1.0"
+      image  = local.aca_01_latest_image
       cpu    = 0.25
       memory = "0.5Gi"
     }
