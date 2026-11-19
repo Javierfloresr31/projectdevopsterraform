@@ -6,41 +6,65 @@ Repositorio de infraestructura como código (IaC) para aprovisionar recursos de 
 
 ## 1. Arquitectura general
 
-El flujo de entrega implementado se divide en dos partes:
+El proceso de entrega de la aplicación se realiza en dos ejecuciones consecutivas y controladas:
 
-1. **Construcción y publicación de la aplicación:** Jenkins clona el repositorio Java, construye una imagen Docker y la publica en Docker Hub con una etiqueta basada en el SHA del commit.
-2. **Infraestructura de ejecución en Azure:** Terraform declara los recursos de red, seguridad, identidad, Key Vault, Azure Container Apps y Azure SQL que sirven como plataforma de ejecución de la aplicación.
+1. **Desarrollo de la aplicación:** se actualiza el código fuente Java en el repositorio [`projectdevopsjava`](https://github.com/Javierfloresr31/projectdevopsjava), en la rama `main).
+2. **Integración continua (Jenkins):** se ejecuta manualmente el pipeline de Jenkins. Este clona la rama `main` del repositorio Java, obtiene el SHA del commit, construye la imagen Docker y la publica en Docker Hub (`javierfloresr31/myapp`) usando ese SHA como etiqueta.
+3. **Despliegue de infraestructura/aplicación (Terraform):** después de que Jenkins termina correctamente la publicación, se ejecuta `terraform apply` desde este repositorio. Durante la evaluación de la configuración, Terraform consulta la API de Docker Hub, obtiene la etiqueta con la actualización más reciente del repositorio y construye la referencia de imagen que usará el recurso Azure Container App. Al aplicar los cambios, Azure Container Apps se crea o actualiza con esa imagen.
 
-Vista lógica:
+Vista del flujo:
 
 ```text
-Repositorio Java (GitHub, rama main)
-              |
-              v
-           Jenkins
-              |
-       docker build
-              |
-              v
-       Imagen Docker
-              |
-              v
-          Docker Hub
-              |
-              |  Terraform consulta la última etiqueta
-              v
-    Azure Container Apps
-              |
-       Identidad asignada
-              |
-       +------+------+
-       |             |
-       v             v
-   Azure Key Vault  Azure SQL
-   (secretos)       (datos)
+  Desarrollo / actualización Java
+                 |
+                 v
+    GitHub: projectdevopsjava
+             rama main
+                 |
+                 v
+       Ejecución manual Jenkins
+          (pipeline CI)
+                 |
+          +------+------+
+          |             |
+       git clone     SHA commit
+          |             |
+          +------+------+
+                 |
+             docker build
+                 |
+                 v
+      Docker Hub: javierfloresr31/myapp
+           etiqueta = SHA
+                 |
+       Jenkins finaliza correctamente
+                 |
+                 v
+     Ejecución manual: terraform apply
+                 |
+         Terraform consulta
+           Docker Hub API
+                 |
+       identifica última etiqueta
+                 |
+                 v
+       Azure Container Apps
+       actualiza/usa esa imagen
+                 |
+       +---------+----------+
+       |                    |
+       v                    v
+   Azure Key Vault       Azure SQL
+     (secretos)           (datos)
 ```
 
-Terraform consulta la etiqueta más recientemente actualizada del repositorio Docker Hub configurado y la utiliza para definir la imagen del Container App. La publicación de una imagen y la actualización del Container App son operaciones separadas: el `Jenkinsfile` actual no ejecuta Terraform ni actualiza directamente el recurso de Container Apps.
+**Relación entre ambos repositorios:**
+
+- [`projectdevopsjava`](https://github.com/Javierfloresr31/projectdevopsjava) contiene el código fuente de la aplicación Java y su Dockerfile.
+- [`projectdevopsterraform`](https://github.com/Javierfloresr31/projectdevopsterraform) contiene la infraestructura como código y el Jenkinsfile que construye y publica la imagen del proyecto Java.
+- Docker Hub actúa como registro de imágenes entre la etapa de CI y el despliegue en Azure.
+
+**Importante:** Jenkins y Terraform se ejecutan en momentos distintos. Jenkins no lanza `terraform apply` ni realiza el despliegue en Azure. La publicación de una imagen en Docker Hub tampoco actualiza por sí sola el Container App: es necesario ejecutar `terraform apply` después de que Jenkins haya finalizado correctamente. La consulta de Docker Hub selecciona la etiqueta con la actualización más reciente, por lo que el `terraform apply` debe ejecutarse después de la publicación deseada.
 
 ## 2. Tecnologías y componentes
 
